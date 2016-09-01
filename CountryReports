@@ -1,0 +1,165 @@
+# Actualizado Programa para formatear los resultados del modelo IMPACT y realizar los analisis graficos-----
+#Por: Jesús Rodríguez # ajustado por Carlos Edo
+library(reshape)
+library(ggplot2)
+library(plyr)
+library(grid)
+library(gridExtra)
+
+
+#Definir directorio de trabajo
+setwd("C:/Users/CEGONZALEZ/Documents/IMPACT3-Model-ver3.2/OutputFiles/Aggregation/")
+#Dirreción graficos
+grd<-"C:/Users/CEGONZALEZ/Documents/BIDCarlos/"
+
+#Cargar marco de datos principal
+md<-read.csv("Resultados_Ciat_StCty_31_08_16_new.csv",header=T)
+
+
+
+#Hacer un subconjunto que sólo contenga las variables de mi interés
+mdsub<-subset(md,md$impactparameter=="QSXAgg -- Total Production" | 
+                md$impactparameter=="TAreaXAgg -- Total Area" |
+                md$impactparameter== "QNXAgg -- Net Trade" | 
+                md$impactparameter== "QDXAgg -- Total Demand")
+
+mdsub$impactparameter<-revalue(mdsub$impactparameter, c("QDXAgg -- Total Demand"="Total Demand",
+                                                        "QNXAgg -- Net Trade"="Net Trade",
+                                                        "QSXAgg -- Total Production"="Total Production",
+                                                        "TAreaXAgg -- Total Area"="Total Area"))
+
+#Hacer un subconjunto que sólo contenga los cinco cultivos analizados
+mdsubcrop<-subset(mdsub,mdsub$commodity=="jbean"| mdsub$commodity=="jmaize" |
+                    mdsub$commodity=="jrice" | mdsub$commodity=="jsoyb2" |
+                    mdsub$commodity=="jwhea" | mdsub$commodity=="cbean" |
+                    mdsub$commodity=="cmaiz" | mdsub$commodity=="crice" |
+                    mdsub$commodity=="csoyb2" | mdsub$commodity=="cwhea")
+
+#Hacer un subconjunto de md que sólo contenga los paises de LAC
+lac_reg<-levels(mdsubcrop$region)[c(70,72,78,79,81,85,87)]
+
+mdsubcrop_lac<-mdsubcrop[which(mdsubcrop$region %in% lac_reg),]
+
+mdsubcrop_lac<-droplevels(mdsubcrop_lac)
+
+mdwide <- reshape(mdsubcrop_lac, v.names = "Val", idvar = 
+                    c("scenario","commodity","region","productiontype",
+                      "impactparameter"),timevar = "year", direction = "wide")
+
+mdwide$commodity<-revalue(mdwide$commodity, c("cbean"= "Bean",
+                                              "cmaiz"="Maize",
+                                              "crice"="Rice",
+                                              "csoyb2"="Soybean",
+                                              "cwhea"="Wheat",
+                                              "jbean"="Bean",
+                                              "jmaize"="Maize",
+                                              "jrice"="Rice",
+                                              "jsoyb2"="Soybean",
+                                              "jwhea"="Wheat"))
+
+mdwide$region<-revalue(mdwide$region,c("LAC-Argentina"="Argentina",
+                                       "LAC-Bolivia"="Bolivia",
+                                       "LAC-Guatemala"="Guatemala",
+                                       "LAC-Jamaica"="Jamaica",
+                                       "LAC-Nicaragua"="Nicaragua",
+                                       "LAC-Ecuador"="Ecuador",
+                                       "LAC-Dominican Republic"="Republica Dominicana"))
+
+
+
+mdwide<-data.frame(mdwide,"Cat"=ifelse(mdwide$scenario=="NoCC","NoCC","CC"))
+
+rend_all<-mdwide[,-c(5:20)]
+rend_all$Percentage_Change<-((rend_all$Val.2050-rend_all$Val.2020)/rend_all$Val.2020)*100
+
+#Mediana de los cambios porcentuales por categorias.
+
+anal_datag<-aggregate(rend_all[,"Percentage_Change"],
+                      by=list(rend_all$region,rend_all$impactparameter,
+                              rend_all$commodity,rend_all$Cat),
+                      FUN=median)
+
+ggplot(data=droplevels(subset(anal_datag,anal_datag$Group.3 ==levels(anal_datag$Group.3)[i]
+                              & anal_datag$Group.2 !="Net Trade" 
+                              & anal_datag$Group.4 != "NoCC")),aes(x=Group.1,y=x))  +
+  facet_wrap( ~ Group.2,ncol=4)+
+  geom_bar(stat="identity")
+
+
+#Realizar proceso para graficar todas las variables por regiones.
+
+pl<-NULL
+for (i in 1:length(levels(anal_datag$Group.1))) {
+  
+  tiff(filename=paste(grd,levels(anal_datag$Group.1)[i],"_country_reportNew.tiff",sep=""), 
+       width = 10, height = 7, units = 'in', res = 100)
+  
+  pl[[i]]<-print(ggplot(data=droplevels(subset(anal_datag,anal_datag$Group.1 ==levels(anal_datag$Group.1)[i]
+                                               & anal_datag$Group.2 !="Net Trade" 
+                                               & anal_datag$Group.4 != "NoCC")),aes(x=Group.3,y=x
+                                                                                    ,fill=Group.2))  +
+                   facet_wrap( ~ Group.2,ncol=4)+
+                   geom_bar(stat="identity")+
+                   geom_point(aes(shape=Group.4),data=droplevels(subset(anal_datag,anal_datag$Group.1 ==
+                                                                          levels(anal_datag$Group.1)[i]
+                                                                        & anal_datag$Group.2 !="Net Trade" 
+                                                                        & anal_datag$Group.4 == "NoCC")),
+                              alpha = 0.4,size=4) +
+                   guides(fill=FALSE)+
+                   theme(axis.text.x = element_text(angle = 90, hjust = 1),legend.title=element_blank())+
+                   theme(legend.position="bottom")+
+                   labs(y="Percentage Change",x="")
+  )
+  
+  dev.off()
+  print(i)
+}              
+
+#Evolution of Net Trade by crop and by region
+datos<-droplevels(subset(rend_all,rend_all$impactparameter==levels(rend_all$impactparameter)[2]))
+
+datmin<-aggregate(datos[,paste("Val.",2020:2050,sep="")],by=list(datos$region,datos$commodity),FUN=min)
+
+datmin<-reshape(datmin,varying = paste("Val.",2020:2050,sep=""),idvar = c("Group.1","Group.2"),
+                direction="long",v.names = "datmin",times=2020:2050)
+names(datmin)<-c("Region","Crop","time","datmin")
+
+
+datmed<-aggregate(datos[,paste("Val.",2020:2050,sep="")],by=list(datos$region,datos$commodity),FUN=median)
+
+datmed<-reshape(datmed,varying = paste("Val.",2020:2050,sep=""),idvar = c("Group.1","Group.2"),
+                direction="long",v.names = "datmed",times=2020:2050)
+names(datmed)<-c("Region","Crop","time","datmed")
+
+
+datmax<-aggregate(datos[,paste("Val.",2020:2050,sep="")],by=list(datos$region,datos$commodity),FUN=max)
+
+datmax<-reshape(datmax,varying = paste("Val.",2020:2050,sep=""),idvar = c("Group.1","Group.2"),
+                direction="long",v.names = "datmax",times=2020:2050)
+names(datmax)<-c("Region","Crop","time","datmax")
+
+extremos<-merge(datmin,datmax)
+
+datost<-merge(extremos,datmed)
+
+py<-NULL
+
+for (i in 1:length(levels(datost$Region))) {
+  
+  tiff(filename=paste(grd,levels(datost$Region)[i],"_net_tradeNew.tiff",sep=""), 
+       width = 10, height = 7, units = 'in', res = 100)
+  
+  py[[i]]<-print(ggplot(data=droplevels(subset(datost,datost$Region==levels(datost$Region)[i])),
+                        aes(time,datmed,group=Crop,color=Crop)) + 
+                   geom_line(linetype="dashed",size=1)+
+                   geom_ribbon(aes(ymin=datmin,ymax=datmax,fill=Crop,colour=Crop,linetype=NA),
+                               alpha=0.1) +
+                   labs(y="Net trade (000 mt)",x="Year")+
+                   theme(legend.position="bottom")
+                 
+  )
+  
+  
+  dev.off()
+  print(i)
+}  
